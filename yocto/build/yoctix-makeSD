@@ -1,0 +1,21 @@
+#!/bin/bash
+set -x # echo on
+#SECONDS=0
+# add boot.bin to image EFI partition
+wic cp \
+ tmp/deploy/images/custom-machine/boot.bin \
+ tmp/deploy/images/amd-cortexa53-common/edf-linux-disk-image-amd-cortexa53-common.rootfs.wic:1
+#recompute blockmap
+sudo bmaptool create \
+  -o tmp/deploy/images/amd-cortexa53-common/edf-linux-disk-image-amd-cortexa53-common.rootfs.wic.bmap \
+  tmp/deploy/images/amd-cortexa53-common/edf-linux-disk-image-amd-cortexa53-common.rootfs.wic
+# now write image to SD
+umount /dev/sdb1
+umount /dev/sdb2
+umount /dev/sdb3
+umount /dev/sdb4
+sudo bmaptool copy \
+  tmp/deploy/images/amd-cortexa53-common/edf-linux-disk-image-amd-cortexa53-common.rootfs.wic \
+  /dev/sdb
+#duration=$SECONDS
+#TZ=UTC0 printf 'Yocto compile time was %(%H:%M:%S)T\n' "$duration"

@@ -1,0 +1,13 @@
+#!/bin/bash
+set -x # echo on
+SECONDS=0
+MACHINE=custom-machine bitbake xilinx-bootbin -c cleanall
+MACHINE=amd-cortexa53-common bitbake edf-linux-disk-image -c cleanall
+rm -rf ./sstate-cache
+rm -rf ./tmp
+rm -rf ./tmp-custom-machine-cortexa53-fsbl
+rm -rf ./tmp-custom-machine-microblaze-pmu
+MACHINE=custom-machine bitbake xilinx-bootbin
+MACHINE=amd-cortexa53-common bitbake edf-linux-disk-image
+duration=$SECONDS
+TZ=UTC0 printf 'Yocto compile time was %(%H:%M:%S)T\n' "$duration"
