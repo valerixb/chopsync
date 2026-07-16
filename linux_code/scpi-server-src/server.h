@@ -38,11 +38,12 @@
 #define OKS  "OK"
 #define MAXREG 12
 
-#define REGBANK_BASE 0xA0000000
+// #define REGBANK_BASE 0xA0000000
+#define REGBANK_BASE 0x80030000
 #define REGBANK_SIZE 256
 
-#define PRODUCT_FNAME "/etc/petalinux/product"
-#define VERSION_FNAME "/etc/petalinux/version"
+#define PRODUCT_FNAME "/etc/maxiv/product"
+#define VERSION_FNAME "/etc/maxiv/version"
 
 #define FREQUENCY 0x0001
 #define PHASE 0x0002

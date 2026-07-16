@@ -6,14 +6,14 @@
 #           readback values from hardware
 #################################################
 
-statusW=$( devmem 0xA0000000 32 )
-accelCMD=$( devmem 0xA0000014 32 )
+statusW=$( devmem 0x80030000 32 )
+accelCMD=$( devmem 0x80030014 32 )
 # accel CMD is signed 22.0
 if [ $(($accelCMD)) -gt 2097151 ]; then
     accelCMD=$(($accelCMD - 4194304))
 fi
 
-phERR=$( devmem 0xA0000018 32 )
+phERR=$( devmem 0x80030018 32 )
 # phase error is signed 24.7 ; scale is 8 ns
 if [ $(($phERR)) -gt 8388607 ]; then
     phERR=$(($phERR - 16777216))
@@ -21,11 +21,11 @@ fi
 #phERR=$(($phERR*8/128))
 phERR=$( printf "%d" $phERR | awk '{printf("%+.3f",$1*8/128 )}' )
 
-REFfreq=$( devmem 0xA000001C 32 )
-VCOfreq=$( devmem 0xA0000020 32 )
+REFfreq=$( devmem 0x8003001C 32 )
+VCOfreq=$( devmem 0x80030020 32 )
 
-Rdiv=$( devmem 0xA0000024 32 )
-Ndiv=$( devmem 0xA0000028 32 )
+Rdiv=$( devmem 0x80030024 32 )
+Ndiv=$( devmem 0x80030028 32 )
 
 
 ##############################################################
