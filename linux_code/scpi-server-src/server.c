@@ -63,7 +63,7 @@ void upstring(char *s)
 void trimstring(char* s)
   {
   char   *begin, *end;
-  char   wbuf[MAXMSG+1];
+  char   wbuf[SCPI_MAXMSG+1];
   size_t len;
 
   len=strlen(s);
@@ -154,14 +154,14 @@ void parseREG(char *ans, size_t maxlen, int rw)
 void parseIDN(char *ans, size_t maxlen)
   {
   FILE *fd;
-  char prod[MAXMSG+1], ver[MAXMSG+1];
+  char prod[SCPI_MAXMSG+1], ver[SCPI_MAXMSG+1];
   char *s;
 
   // firmware name
   fd = fopen(PRODUCT_FNAME, "r");
   if(fd!=NULL)
     {
-    s=fgets(prod, MAXMSG, fd);
+    s=fgets(prod, SCPI_MAXMSG, fd);
     fclose(fd);
     if(s==NULL)
       strcpy(prod,"Unknown Firmware");
@@ -173,7 +173,7 @@ void parseIDN(char *ans, size_t maxlen)
   fd = fopen(VERSION_FNAME, "r");
   if(fd!=NULL)
     {
-    s=fgets(ver, MAXMSG, fd);
+    s=fgets(ver, SCPI_MAXMSG, fd);
     fclose(fd);
     if(s==NULL)
       strcpy(ver,"Unknown");
@@ -1100,13 +1100,64 @@ void sendback(int filedes, char *s)
 
 //-------------------------------------------------------------------
 
-int read_from_client(int filedes)
+void split_lines(const char *buf, size_t len, int filedes)
   {
-  char buffer[MAXMSG+1];    // "+1" to add zero-terminator
-  char answer[MAXMSG+1];
+  // split incoming message line by line and feed the lines to the parser
+  // beware that a line may be split between successive reads
+
+  static char leftover[SCPI_MAXMSG] = {0};
+  static size_t leftover_len = 0;
+  char answer[SCPI_MAXMSG];
+
+  char temp[SCPI_MAXMSG * 2]; // to hold leftover + current buffer
+  size_t temp_len = 0;
+
+  // Combine leftover with new buffer
+  memcpy(temp, leftover, leftover_len);
+  temp_len = leftover_len;
+  memcpy(temp + temp_len, buf, len);
+  temp_len += len;
+  temp[temp_len] = '\0';
+
+  // Reset leftover
+  leftover_len = 0;
+  leftover[0] = '\0';
+
+  // Process lines
+  char *start = temp;
+  char *newline;
+  while((newline = memchr(start, '\n', temp + temp_len - start)))
+    {
+    *newline = '\0';
+
+    // Pass complete line to callback
+    //fprintf(stderr, "Incoming msg: '%s'(%d)\n", start,start[0]);
+    parse(start, answer, SCPI_MAXMSG, filedes);
+    sendback(filedes, answer);
+
+    start = newline + 1;
+    }
+
+  // Store any incomplete line as leftover
+  if(start < temp + temp_len)
+    {
+    leftover_len = temp + temp_len - start;
+    if(leftover_len >= SCPI_MAXMSG)
+      leftover_len = SCPI_MAXMSG - 1; // truncate if too long
+    memcpy(leftover, start, leftover_len);
+    leftover[leftover_len] = '\0';
+    }
+  }
+
+
+//-------------------------------------------------------------------
+
+int SCPI_read_from_client(int filedes)
+  {
+  char buffer[SCPI_MAXMSG];
   int  nbytes;
   
-  nbytes = read(filedes, buffer, MAXMSG);
+  nbytes = read(filedes, buffer, SCPI_MAXMSG-1);  // "-1" to leave space for a \0 at the end of the string
   if(nbytes < 0)
     {
     // read error
@@ -1121,12 +1172,27 @@ int read_from_client(int filedes)
   else
     {
     // data read
-    buffer[nbytes]=0;    // add string zero terminator
-    //fprintf(stderr, "Incoming msg: '%s'\n", buffer);
-    parse(buffer, answer, MAXMSG, filedes);
-    sendback(filedes, answer);
+    // split it line by line and feed the lines to the parser
+    // beware that a line may be split between successive reads
+    split_lines(buffer, nbytes, filedes);
     return 0;
     }
+  }
+
+
+//-------------------------------------------------------------------
+
+void ReadSCPIconf(const char *fname)
+  {
+  int fd, eof;
+
+  // I don't test errors; note that the config file is optional
+
+  fd=open(fname,O_RDONLY);
+  if(fd!=-1)
+    for(eof=0; eof==0;)
+      eof=SCPI_read_from_client(fd);
+  (void)close(fd);
   }
 
 
@@ -1147,6 +1213,9 @@ int main(void)
     fprintf(stderr,"Can't map Register Bank - aborted\n");
     return -1;
     }
+
+  // load initial configuration from file
+  ReadSCPIconf(SCPI_SERVER_CONFIG_FILENAME);
 
   fprintf(stderr,"Starting server\n");
 
@@ -1224,7 +1293,7 @@ int main(void)
             exit(EXIT_FAILURE);
             }
           fprintf(stderr,
-                 "Server: new connection from host %s, port %hd\n",
+                 "SCPI server: new connection from host %s, port %hd\n",
                  inet_ntoa(clientname.sin_addr),
                  ntohs(clientname.sin_port));
           FD_SET(newfd, &active_fd_set);
@@ -1237,7 +1306,7 @@ int main(void)
           {
           // data arriving on an already-connected socket
           //fprintf(stderr,"Incoming data\n");
-          if(read_from_client(i) < 0)
+          if(SCPI_read_from_client(i) < 0)
             {
             fprintf(stderr,"Closing connection\n");
             close(i);

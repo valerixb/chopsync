@@ -30,7 +30,7 @@
 
 
 #define PORT    8888
-#define MAXMSG  512
+#define SCPI_MAXMSG  512
 
 #define READ  1
 #define WRITE 0
@@ -44,6 +44,7 @@
 
 #define PRODUCT_FNAME "/etc/maxiv/product"
 #define VERSION_FNAME "/etc/maxiv/version"
+#define SCPI_SERVER_CONFIG_FILENAME  "/etc/scpi.conf"
 
 #define FREQUENCY 0x0001
 #define PHASE 0x0002
@@ -122,7 +123,9 @@ void         parseMECOS_STABLE(char *ans, size_t maxlen, int rw);
 void         printHelp(int filedes);
 void         parse(char *buf, char *ans, size_t maxlen, int filedes);
 void         sendback(int filedes, char *s);
-int          read_from_client(int filedes);
+void         split_lines(const char *buf, size_t len, int filedes);
+int          SCPI_read_from_client(int filedes);
+void         ReadSCPIconf(const char *fname);
 //int          main(int argc, char *const argv[]);
 int          main(void);
 
