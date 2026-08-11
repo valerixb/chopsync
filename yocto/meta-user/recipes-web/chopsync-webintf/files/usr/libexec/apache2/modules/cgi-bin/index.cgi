@@ -27,44 +27,45 @@ N_div=$( get_parameter N_div )
 TRIG_ph=$( get_parameter TRIG_ph )
 Extra_G=$( get_parameter extraGain )
 
+DEVMEM="/usr/libexec/apache2/modules/cgi-bin/devmem"
 
 #################################################
 #           do something on hardware
 #################################################
 
 # read current control word before modigying it
-ctrlW=$( devmem 0x80030004 32 )
+ctrlW=$( $DEVMEM 0x80030004 32 )
 if [ $Unwr_En = "0" ]; then
-    devmem 0x80030004 32 $(($ctrlW & 0xFE))
+    $DEVMEM 0x80030004 32 $(($ctrlW & 0xFE))
 elif [ $Unwr_En = "1" ]; then
-    devmem 0x80030004 32 $(($ctrlW | 0x01))
+    $DEVMEM 0x80030004 32 $(($ctrlW | 0x01))
 fi
 
-ctrlW=$( devmem 0x80030004 32 )
+ctrlW=$( $DEVMEM 0x80030004 32 )
 if [ $Unwr_Res = "0" ]; then
-    devmem 0x80030004 32 $(($ctrlW & 0xFD))
+    $DEVMEM 0x80030004 32 $(($ctrlW & 0xFD))
 elif [ $Unwr_Res = "1" ]; then
-    devmem 0x80030004 32 $(($ctrlW | 0x02))
+    $DEVMEM 0x80030004 32 $(($ctrlW | 0x02))
 fi
 
-ctrlW=$( devmem 0x80030004 32 )
+ctrlW=$( $DEVMEM 0x80030004 32 )
 AlarmAutoReset="0"
 if [ $Soft_Res = "0" ]; then
-    devmem 0x80030004 32 $(($ctrlW & 0xFB))
+    $DEVMEM 0x80030004 32 $(($ctrlW & 0xFB))
     # if we are eanbling the controller, force a reset of alarms
     AlarmAutoReset="1"
 elif [ $Soft_Res = "1" ]; then
-    devmem 0x80030004 32 $(($ctrlW | 0x04))
+    $DEVMEM 0x80030004 32 $(($ctrlW | 0x04))
 fi
 
-ctrlW=$( devmem 0x80030004 32 )
+ctrlW=$( $DEVMEM 0x80030004 32 )
 if [ $Lock_Alarm_Res = "reset" ]; then
-    devmem 0x80030004 32 $(($ctrlW | 0x08))
+    $DEVMEM 0x80030004 32 $(($ctrlW | 0x08))
 fi
 
 # reset threshold is forced to a positive value
 if [ $Res_Thr != "" ]; then
-    devmem 0x80030008 32 $(($Res_Thr>0?$Res_Thr:-$Res_Thr))
+    $DEVMEM 0x80030008 32 $(($Res_Thr>0?$Res_Thr:-$Res_Thr))
 fi
 
 # phase setpoint is signed 17.0; scale is 8 ns per count
@@ -81,29 +82,29 @@ if [ $Ph_Setpt != "" ]; then
     #if [ $Ph_Setpt -lt 0 ]; then
     #    Ph_Setpt=$(($Ph_Setpt+131072))
     #fi
-    devmem 0x8003000C 32 $(($Ph_Setpt))
+    $DEVMEM 0x8003000C 32 $(($Ph_Setpt))
 fi
 
 # siggen frequency is signed 32.0; scale is 2199 counts per Hz
 if [ $Siggen_Freq != "" ]; then
     Siggen_Freq=$(( ($Siggen_Freq*2199) & 0xFFFFFFFF ))
-    devmem 0x80030010 32 $(($Siggen_Freq))
+    $DEVMEM 0x80030010 32 $(($Siggen_Freq))
 fi
 
 # R divider on reference (forced to a positive value)
 if [ $R_div != "" ]; then
-    devmem 0x80030024 32 $(($R_div>0?$R_div:-$R_div))
+    $DEVMEM 0x80030024 32 $(($R_div>0?$R_div:-$R_div))
 fi
 
 # N divider on VCO (forced to a positive value)
 if [ $N_div != "" ]; then
-    devmem 0x80030028 32 $(($N_div>0?$N_div:-$N_div))
+    $DEVMEM 0x80030028 32 $(($N_div>0?$N_div:-$N_div))
 fi
 
 # TRIG OUT phase, forced to a positive value
 # it will be later forced into range [1,R]
 if [ $TRIG_ph != "" ]; then
-    devmem 0x80030030 32 $(($TRIG_ph>0?$TRIG_ph:-$TRIG_ph))
+    $DEVMEM 0x80030030 32 $(($TRIG_ph>0?$TRIG_ph:-$TRIG_ph))
 fi
 
 # Extra Loop Gain is unsigned 16.12
@@ -111,7 +112,7 @@ if [ $Extra_G != "" ]; then
     # need awk for floating point
     Extra_G=$( awk '{printf("%d",$1*$2)}' <<<"  $Extra_G  4096 " )
     Extra_G=$(( ($Extra_G>0?$Extra_G:-$Extra_G) & 0xFFFF ))
-    devmem 0x8003002C 32 $(($Extra_G))
+    $DEVMEM 0x8003002C 32 $(($Extra_G))
 fi
 
 
@@ -120,32 +121,32 @@ fi
 #           readback values from hardware
 #################################################
 
-ctrlW=$( devmem 0x80030004 32 )
-resTHRreadback=$( devmem 0x80030008 32 )
+ctrlW=$( $DEVMEM 0x80030004 32 )
+resTHRreadback=$( $DEVMEM 0x80030008 32 )
 # phase setpoint is signed 17.0; scale is 8 ns per count
-phSetReadback=$( devmem 0x8003000C 32 )
+phSetReadback=$( $DEVMEM 0x8003000C 32 )
 if [ $(($phSetReadback)) -gt 65535 ]; then
     phSetReadback=$(($phSetReadback - 131072))
 fi
 phSetReadback=$(($phSetReadback*8))
 # signal generator deltaFrequency; it's signed 32.0; scale is 2199 cnts = 1 Hz
-siggenDF=$( devmem 0x80030010 32 )
+siggenDF=$( $DEVMEM 0x80030010 32 )
 if [ $(($siggenDF)) -gt 2147483647 ]; then
     siggenDF=$(($siggenDF - 4294967296))
 fi
 siggenDF=$(($siggenDF/2199))
 
-Rdiv=$( devmem 0x80030024 32 )
-Ndiv=$( devmem 0x80030028 32 )
-TRIGph=$( devmem 0x80030030 32 )
+Rdiv=$( $DEVMEM 0x80030024 32 )
+Ndiv=$( $DEVMEM 0x80030028 32 )
+TRIGph=$( $DEVMEM 0x80030030 32 )
 
 # force TRIG OUT phase into range [1,R]
 TRIGph=$(($TRIGph>1?$TRIGph:1))
 TRIGph=$(($TRIGph<$Rdiv?$TRIGph:$Rdiv))
-devmem 0x80030030 32 $(($TRIGph))
+$DEVMEM 0x80030030 32 $(($TRIGph))
 
 # extra loop gain is unsigned 16.12
-extra_Gain=$( devmem 0x8003002C 32 )
+extra_Gain=$( $DEVMEM 0x8003002C 32 )
 # convert to decimal
 extra_Gain=$( printf "%d" $extra_Gain )
 # must use awk for floating point
