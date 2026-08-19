@@ -1,437 +1,529 @@
-#!/bin/bash
+#!/usr/bin/python
 
-# remember: no blanks before or after = , otherwise labels are interpreted as commands instead of variables
+import socket
+#import select
+import os
+import urllib.parse
+#import time
+#from datetime import datetime
+#import numpy as np
+#import matplotlib.pyplot as plt
+#import io
+#import base64
+#import fnmatch
 
-function get_parameter ()
-    {
-    echo "$query" | tr '&' '\n' | grep "^$1=" | head -1 \
-    | sed "s/.*=//"
-    }
+# constants
 
 
-if [ "$REQUEST_METHOD" = POST ]; then
-    query=$( head --bytes="$CONTENT_LENGTH")
-else
-    query="$QUERY_STRING"
-fi
+# defaults
 
-Unwr_En=$( get_parameter UnwrEN )
-Unwr_Res=$( get_parameter UnwrRES )
-Soft_Res=$( get_parameter PHctrlrRES )
-Lock_Alarm_Res=$( get_parameter lock_loss_res )
-Res_Thr=$( get_parameter UnwrTHR )
-Ph_Setpt=$( get_parameter PhSet )
-Siggen_Freq=$( get_parameter siggenDFTW )
-R_div=$( get_parameter R_div )
-N_div=$( get_parameter N_div )
-TRIG_ph=$( get_parameter TRIG_ph )
-Extra_G=$( get_parameter extraGain )
+# --------------------  open html page right away, so we can print errors on it -----------------------
 
-DEVMEM="/usr/libexec/apache2/modules/cgi-bin/devmem"
+print('Content-type:text/html\r\n\r\n')
+print('<!DOCTYPE html>')
+print('<html>')
+print('<head>')
+print('')
+print('  <table>')
+print('    <tr>')
+print('      <td> <a href="/cgi-bin/index.cgi"> <img src="/MAX-IV_logo1_rgb-300x104.png" alt="MaxIV Laboratory"> </a> </td>')
+print('      <td>')
+print('      <H1>Max IV Chopper Phase Synchronizer</H1>')
+print('      <H2>Command & Control Panel</H2>')
+print('      </td>')
+print('    </tr>')
+print('  </table>')
+print('</head>')
+print('<body>')
 
-#################################################
-#           do something on hardware
-#################################################
+print('This web page is about MaxIV chopper synchronizer;<br>')
+print('if you want to control MECOS Active Magnetic Bearing, please use ')
+print('<a href="/cgi-bin/mecosCtrl.cgi">this web page</a>')
+print('<br>')
 
-# read current control word before modigying it
-ctrlW=$( $DEVMEM 0x80030004 32 )
-if [ $Unwr_En = "0" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW & 0xFE))
-elif [ $Unwr_En = "1" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW | 0x01))
-fi
 
-ctrlW=$( $DEVMEM 0x80030004 32 )
-if [ $Unwr_Res = "0" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW & 0xFD))
-elif [ $Unwr_Res = "1" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW | 0x02))
-fi
+# --------- open a connection to r5ctrlr SCPI server ----------
 
-ctrlW=$( $DEVMEM 0x80030004 32 )
-AlarmAutoReset="0"
-if [ $Soft_Res = "0" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW & 0xFB))
-    # if we are eanbling the controller, force a reset of alarms
-    AlarmAutoReset="1"
-elif [ $Soft_Res = "1" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW | 0x04))
-fi
-
-ctrlW=$( $DEVMEM 0x80030004 32 )
-if [ $Lock_Alarm_Res = "reset" ]; then
-    $DEVMEM 0x80030004 32 $(($ctrlW | 0x08))
-fi
-
-# reset threshold is forced to a positive value
-if [ $Res_Thr != "" ]; then
-    $DEVMEM 0x80030008 32 $(($Res_Thr>0?$Res_Thr:-$Res_Thr))
-fi
-
-# phase setpoint is signed 17.0; scale is 8 ns per count
-# limit to [-10us, +10us]
-if [ $(($Ph_Setpt)) -gt 10000 ]; then
-    Ph_Setpt=10000
-elif [ $(($Ph_Setpt)) -lt -10000 ]; then
-    Ph_Setpt=-10000
-fi
-
-if [ $Ph_Setpt != "" ]; then
-    Ph_Setpt=$(( ($Ph_Setpt/8) & 0x01FFFF ))
-    # the previous "bitwise &" takes into account the sign; no need to check again
-    #if [ $Ph_Setpt -lt 0 ]; then
-    #    Ph_Setpt=$(($Ph_Setpt+131072))
-    #fi
-    $DEVMEM 0x8003000C 32 $(($Ph_Setpt))
-fi
-
-# siggen frequency is signed 32.0; scale is 2199 counts per Hz
-if [ $Siggen_Freq != "" ]; then
-    Siggen_Freq=$(( ($Siggen_Freq*2199) & 0xFFFFFFFF ))
-    $DEVMEM 0x80030010 32 $(($Siggen_Freq))
-fi
-
-# R divider on reference (forced to a positive value)
-if [ $R_div != "" ]; then
-    $DEVMEM 0x80030024 32 $(($R_div>0?$R_div:-$R_div))
-fi
-
-# N divider on VCO (forced to a positive value)
-if [ $N_div != "" ]; then
-    $DEVMEM 0x80030028 32 $(($N_div>0?$N_div:-$N_div))
-fi
-
-# TRIG OUT phase, forced to a positive value
-# it will be later forced into range [1,R]
-if [ $TRIG_ph != "" ]; then
-    $DEVMEM 0x80030030 32 $(($TRIG_ph>0?$TRIG_ph:-$TRIG_ph))
-fi
-
-# Extra Loop Gain is unsigned 16.12
-if [ $Extra_G != "" ]; then
-    # need awk for floating point
-    Extra_G=$( awk '{printf("%d",$1*$2)}' <<<"  $Extra_G  4096 " )
-    Extra_G=$(( ($Extra_G>0?$Extra_G:-$Extra_G) & 0xFFFF ))
-    $DEVMEM 0x8003002C 32 $(($Extra_G))
-fi
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(("127.0.0.1", 8888))
+#s.connect(("192.168.0.17", 8888))
 
 
 
-#################################################
-#           readback values from hardware
-#################################################
 
-ctrlW=$( $DEVMEM 0x80030004 32 )
-resTHRreadback=$( $DEVMEM 0x80030008 32 )
-# phase setpoint is signed 17.0; scale is 8 ns per count
-phSetReadback=$( $DEVMEM 0x8003000C 32 )
-if [ $(($phSetReadback)) -gt 65535 ]; then
-    phSetReadback=$(($phSetReadback - 131072))
-fi
-phSetReadback=$(($phSetReadback*8))
-# signal generator deltaFrequency; it's signed 32.0; scale is 2199 cnts = 1 Hz
-siggenDF=$( $DEVMEM 0x80030010 32 )
-if [ $(($siggenDF)) -gt 2147483647 ]; then
-    siggenDF=$(($siggenDF - 4294967296))
-fi
-siggenDF=$(($siggenDF/2199))
+# ------------------  do the changes requested by the GET form query string  --------------------
 
-Rdiv=$( $DEVMEM 0x80030024 32 )
-Ndiv=$( $DEVMEM 0x80030028 32 )
-TRIGph=$( $DEVMEM 0x80030030 32 )
+# the query string of the GET form
+# is passed to cgi scripts as the environment
+# variable QUERY_STRING
+query_string = os.environ['QUERY_STRING']
+#query_string = ''
+# convert the query string to a dictionary
+arguments = urllib.parse.parse_qs(query_string)
 
-# force TRIG OUT phase into range [1,R]
-TRIGph=$(($TRIGph>1?$TRIGph:1))
-TRIGph=$(($TRIGph<$Rdiv?$TRIGph:$Rdiv))
-$DEVMEM 0x80030030 32 $(($TRIGph))
+# ---------  check the fields of the GET form query string ----
+# ---------            and act accordingly                 ----
 
-# extra loop gain is unsigned 16.12
-extra_Gain=$( $DEVMEM 0x8003002C 32 )
-# convert to decimal
-extra_Gain=$( printf "%d" $extra_Gain )
-# must use awk for floating point
-extra_Gain=$( awk '{printf("%.3f",$1/$2)}' <<<"  $extra_Gain  4096 " )
+for name in arguments.keys():
+  
+  # -------- sync ON/OFF
+  if name=='sync_on':
+    if int(arguments[name][0])==1:
+      cmd_s='SYNCHRONIZER ON\n'
+      sync_ONOFF=True
+    else:
+      cmd_s='SYNCHRONIZER OFF\n'
+      sync_ONOFF=False
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the global ON/OFF state<br>')
+
+  # -------- phase setpoint (may be negative)
+  elif name=='PhSet':
+    phsetpoint=int(arguments[name][0])
+    cmd_s='PHSETPOINT_NS '+str(phsetpoint)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the phase setpoint<br>')
+    
+  # -------- sticky lock loss alarm reset
+  elif name=='lock_loss_res':
+    if arguments[name][0]=="reset":
+      cmd_s='STICKYLOL OFF\n'
+      s.sendall(cmd_s.encode('ascii')) 
+      ans=(s.recv(1024)).decode('utf-8')
+      tok=ans.split(" ",2)
+      if tok[0].strip()=='ERR:':
+        print('<br>Error resetting sticky lock of loss flag<br>')
+
+  # -------- bunch marker prescaler
+  elif name=='R_div':
+    R_div=int(arguments[name][0])
+    R_div=max(1,abs(R_div))
+    cmd_s='BUNCHMARKER_PRESCALER '+str(R_div)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the bunch marker prescaler<br>')
+
+  # -------- chopper prescaler
+  elif name=='N_div':
+    N_div=int(arguments[name][0])
+    N_div=max(1,abs(N_div))
+    cmd_s='CHOPPER_PRESCALER '+str(N_div)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the chopper prescaler<br>')
+
+  # -------- TRIG OUT phase
+  elif name=='TRIG_ph':
+    TRIG_ph=int(arguments[name][0])
+    TRIG_ph=max(1,abs(TRIG_ph))
+    cmd_s='TRIGOUT_PH '+str(TRIG_ph)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the TRIG OUT phase<br>')
+
+  # -------- unwrapper ON/OFF
+  elif name=='UnwrEN':
+    if int(arguments[name][0])==1:
+      cmd_s='UNWRAPPER ON\n'
+      Unwr_EN=True
+    else:
+      cmd_s='UNWRAPPER OFF\n'
+      Unwr_EN=False
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the unwrapper state<br>')
+
+  # -------- unwrapper reset ON/OFF
+  elif name=='UnwrRES':
+    if int(arguments[name][0])==1:
+      cmd_s='UNW_RES ON\n'
+      Unwr_RES=True
+    else:
+      cmd_s='UNW_RES OFF\n'
+      Unwr_RES=False
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the unwrapper reset state<br>')
+
+  # -------- unwrapper threshold
+  elif name=='UnwrTHR':
+    Res_Thr=int(arguments[name][0])
+    Res_Thr=abs(Res_Thr)
+    cmd_s='UNW_THR '+str(Res_Thr)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding the unwrapper reset threshold<br>')
+
+  # -------- SIGGEN deltaFTW
+  elif name=='siggenDFTW':
+    Siggen_DF=float(arguments[name][0])
+    cmd_s='SIGGEN_DF_HZ '+str(Siggen_DF)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding signal generator deltaFTW<br>')
+
+  # -------- extra Gain
+  elif name=='extraGain':
+    extraG=float(arguments[name][0])
+    cmd_s='GAIN '+str(extraG)+'\n'
+    s.sendall(cmd_s.encode('ascii')) 
+    ans=(s.recv(1024)).decode('utf-8')
+    tok=ans.split(" ",2)
+    if tok[0].strip()=='ERR:':
+      print('<br>Error commanding extra gain<br>')
 
 
-##############################################################
-#      send appropriate HTML back to requesting client
-##############################################################
 
 
-# CAREFUL!! the line with "Content-type and the subsequent blank line ARE NECESSARY, otherwise the page will not load
-echo -e "Content-type: text/html"
-echo ""
+  
+# ------------------  get current config  --------------------
 
-# ----------------------------------------
+# -------- sync ON/OFF
+qstr='SYNCHRONIZER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    sync_ONOFF=True
+  else:
+    sync_ONOFF=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the global ON/OFF state<br>')
+  sync_ONOFF=False
 
-echo -e "<!DOCTYPE html>"
-echo -e "<html>"
-echo -e "   <head>"
-echo -e "        <table>"
-echo -e "            <tr>"
-echo -e "                <td><img src=\"MAX-IV_logo1_rgb-300x104.png\" alt=\"MaxIV Laboratory\"></td>"
-echo -e "                <td>"
-echo -e "                    <H1>Max IV Chopper Phase Synchronizer</H1>"
-#echo -e "                    <H2>Command & Control Panel</H2>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e "        </table>"
-echo -e "   </head>"
-echo -e "   <body>"
+# -------- phase setpoint (may be negative)
+qstr='PHSETPOINT_NS?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  phsetpoint=int(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the phase setpoint<br>')
+  phsetpoint=128
 
-echo -e "This web page is about MaxIV chopper synchronizer;<br>"
-echo -e "if you want to control MECOS Active Magnetic Bearing, please use "
-echo -e "<a href="/cgi-bin/mecosCtrl.cgi">this web page</a>"
-echo -e "<br>"
+# -------- bunch marker prescaler
+qstr='BUNCHMARKER_PRESCALER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  R_div=int(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the bunch marker prescaler<br>')
+  R_div=33
 
-#debug
-#printf "Query: >%s<\n" $query
-#echo -e "      <br>"
-#echo -e "      <br>"
-#printf "Unwrap: >%s<\n" $Unwr_En
-#echo -e "      <br>"
-#printf "UnwrRes: >%s<\n" $Unwr_Res
-#echo -e "      <br>"
-#printf "SoftRes: >%s<\n" $Soft_Res
-#echo -e "      <br>"
-#printf "ResThr: >%s<\n" $Res_Thr
-#echo -e "      <br>"
-#printf "Phase Setpoint: >%s<\n" $Ph_Setpt
-#echo -e "      <br>"
-#printf "Siggen Freq: >%s<\n" $Siggen_Freq
-#echo -e "      <br>"
+# -------- chopper prescaler
+qstr='CHOPPER_PRESCALER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  N_div=int(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the chopper prescaler<br>')
+  N_div=1
+
+# -------- TRIG OUT phase
+qstr='TRIGOUT_ph?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  TRIG_ph=int(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the TRIG OUT phase<br>')
+  TRIG_ph=1
+
+# -------- unwrapper ON/OFF
+qstr='UNWRAPPER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    Unwr_EN=True
+  else:
+    Unwr_EN=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying unwrapper state<br>')
+  Unwr_EN=True
+
+# -------- unwrapper reset ON/OFF
+qstr='UNW_RES?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    Unwr_RES=True
+  else:
+    Unwr_RES=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying unwrapper reset state<br>')
+  Unwr_RES=True
+
+# -------- unwrapper threshold
+qstr='UNW_THR?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  Res_Thr=int(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the unwrapper reset threshold<br>')
+  Res_Thr=10
+
+# -------- SIGGEN deltaFTW
+qstr='SIGGEN_DF_HZ?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  Siggen_DF=float(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the signal generator deltaFTW<br>')
+  Siggen_DF=0.0
+
+# -------- extra Gain
+qstr='GAIN?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  extraG=float(tok[1].strip())
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the extra Gain<br>')
+  extraG=6.0
 
 
-echo -e "        <!-- input fields -->"
 
-echo -e "        <table>"
-echo -e "            <tr>"
-echo -e "                <td colspan=\"2\"> <H3>Synchronizer Control</H3> </td>"
-echo -e "            </tr>"
 
-echo -e "            <tr>"
-echo -e "                <td>Synchronizer ON/OFF:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-echo -e "                        <select name=\"PHctrlrRES\" id = \"PHctrlrRES\" onchange=\"javascript:this.form.submit()\">"
 
-echo -en "                            <option value = \"0\""
-if [  $(($ctrlW & 0x04)) -eq 0 ]; then
-    echo -en " selected=\"selected\""
-fi
-echo -e ">ON</option>"
+# --------------------  now display body of html page  -----------------------
 
-echo -en "                            <option value = \"1\""
-if ! [  $(($ctrlW & 0x04)) -eq 0 ]; then
-    echo -en " selected=\"selected\""
-fi
-echo -e ">OFF</option>"
+print('  <table>')
 
-echo -e "                        </select>"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
+# -------- Synchronizer Control
 
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Phase Setpoint:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
+print('    <tr>')
+print('      <td colspan=\"2\"> <H3>Synchronizer Control</H3> </td>')
+print('    </tr>')
 
-echo -en "                        <input type=\"number\" name=\"PhSet\" id=\"PhSet\" value="
-#printf "%.3f" $(($phSetReadback))
-printf "%d" $(($phSetReadback))
-echo -e " min=\"-10000\" max=\"10000\" step=8 onchange=\"javascript:this.form.submit()\">"
+print('    <tr>')
+print('      <td>Synchronizer ON/OFF:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print('          <select name="sync_on" id = "sync_on" onchange="javascript:this.form.submit()">')
+print('            <option value = "0"')
+if not sync_ONOFF:
+  print(' selected="selected"')
+print('>OFF</option>')
+print('            <option value = "1"')
+if sync_ONOFF:
+  print(' selected="selected"')
+print('>ON</option>')
 
-echo -e "                        ns"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
+print('          </select>')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print('      <td>Phase Setpoint:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="PhSet" id="PhSet" value="{phsetpoint}" min="-10000" max="10000" step=8 onchange="javascript:this.form.submit()">')
+print('           ns')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
 
 # lock loss alarm reset button
-echo -e "            <tr>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" id=\"lock_loss_res\">"
-echo -e "                        <button id=\"lock_loss_res_btn\" name=\"lock_loss_res\" type=\"submit\" form=\"lock_loss_res\" value=\"reset\">Reset Lock Loss Alarm</button>"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
+print('    <tr>')
+print('      <td>')
+print('        <form action="" method="GET" id="lock_loss_res">')
+print('          <button id="lock_loss_res_btn" name="lock_loss_res" type="submit" form="lock_loss_res" value="reset">Reset Lock Loss Alarm</button>')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
 
 
-echo -e "            <tr>"
-echo -e "                <td colspan=\"2\"> <H3>Prescalers</H3> </td>"
-echo -e "            </tr>"
+# -------- Prescalers
+
+print('    <tr>')
+print('      <td colspan=\"2\"> <H3>Prescalers</H3> </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print('      <td>Bunch Marker prescaler:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="R_div" id="R_div" value="{R_div}" min="1" onchange="javascript:this.form.submit()">')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print('      <td>Chopper prescaler:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="N_div" id="N_div" value="{N_div}" min="1" onchange="javascript:this.form.submit()">')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print(f'      <td>TRIGGER OUT phase delay (in range 1 to {R_div}):</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="TRIG_ph" id="TRIG_ph" value="{TRIG_ph}" min="1" max="{R_div}" onchange="javascript:this.form.submit()">')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+# -------- Advanced Setup
+
+print('    <tr>')
+print('      <td colspan=\"2\"> <H3>Advanced Synchronizer Configuration</H3> </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print('      <td>Unwrapper:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print('          <select name="UnwrEN" id = "UnwrEN" onchange="javascript:this.form.submit()">')
+print('            <option value = "0"')
+if not Unwr_EN:
+  print(' selected="selected"')
+print('>DISABLED</option>')
+print('            <option value = "1"')
+if Unwr_EN:
+  print(' selected="selected"')
+print('>ENABLED</option>')
+
+print('          </select>')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print('      <td>Unwrapper Reset:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print('          <select name="UnwrRES" id = "UnwrRES" onchange="javascript:this.form.submit()">')
+print('            <option value = "0"')
+if not Unwr_RES:
+  print(' selected="selected"')
+print('>DISABLED</option>')
+print('            <option value = "1"')
+if Unwr_RES:
+  print(' selected="selected"')
+print('>ENABLED</option>')
+
+print('          </select>')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print('      <td>Unwrapper Reset Threshold:</td>')
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="UnwrTHR" id="UnwrTHR" value="{Res_Thr}" min="0" onchange="javascript:this.form.submit()">')
+print('           cnts')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print("      <td>Diagnostic Signal Generator Freq: 3'123'437.5 +</td>")
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="siggenDFTW" id="siggenDFTW" value="{Siggen_DF}" onchange="javascript:this.form.submit()">')
+print('           Hz')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('    <tr>')
+print("      <td>Control Loop Extra Gain (default=4; hi-perf=6):</td>")
+print('      <td>')
+print('        <form action="" method="GET" >')
+print(f'          <input type="number" name="extraGain" id="extraGain" value="{extraG}" onchange="javascript:this.form.submit()">')
+print('        </form>')
+print('      </td>')
+print('    </tr>')
+
+print('')
+
+print('  </table>')
+
+# -------- readback page
+
+print('  <H3>Synchronizer Readback</H3>')
+print('')
+print('  <!-- readback values + Lock LEDs-->')
+print('  <!-- keep it in a separate frame to enable autoupdate for readback values only -->')
+print('  <!-- iframe src="readVars.html" scrolling=no style="border:none; height: 220px; width: 600px" title="Readback Values"></iframe -->')
+print('  <iframe src="/cgi-bin/readVars.cgi" scrolling=no style="border:none; height: 350px; width: 600px" title="Readback Values"></iframe>')
+print('')
 
 
-echo -e "            <tr>"
-echo -e "                <td>REF Frequency Prescaler Factor:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-
-echo -en "                        <input type=\"number\" name=\"R_div\" id=\"R_div\" min=\"0\" value="
-printf "%d" $(($Rdiv))
-echo -e " onchange=\"javascript:this.form.submit()\">"
-
-echo -e ""
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>CHOPPER Frequency Prescaler Factor:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-
-echo -en "                        <input type=\"number\" name=\"N_div\" id=\"N_div\" min=\"0\" value="
-printf "%d" $(($Ndiv))
-echo -e " onchange=\"javascript:this.form.submit()\">"
-
-echo -e ""
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>TRIGGER OUT phase delay (in range 1 to" 
-printf "%d" $(($Rdiv))
-echo -e ") :</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-
-echo -en "                        <input type=\"number\" name=\"TRIG_ph\" id=\"TRIG_ph\" min=\"1\" max="
-printf "%d" $(($Rdiv))
-echo -en " value="
-printf "%d" $(($TRIGph))
-echo -e " onchange=\"javascript:this.form.submit()\">"
-
-
-echo -e ""
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-
-
-echo -e "            <tr>"
-echo -e "                <td colspan=\"2\"> <H3>Advanced Synchronizer Configuration</H3> </td>"
-echo -e "            </tr>"
-
-
-echo -e "            <tr>"
-echo -e "                <td>Unwrapper:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-echo -e "                        <select name=\"UnwrEN\" id = \"UnwrEN\" onchange=\"javascript:this.form.submit()\">"
-
-echo -en "                            <option value = \"0\""
-if [  $(($ctrlW & 0x01)) -eq 0 ]; then
-    echo -en " selected=\"selected\""
-fi
-echo -e ">DISABLED</option>"
-
-echo -en "                            <option value = \"1\""
-if ! [  $(($ctrlW & 0x01)) -eq 0 ]; then
-    echo -en " selected=\"selected\""
-fi
-echo -e ">ENABLED</option>"
-
-echo -e "                        </select>"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Unwrapper Reset:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-echo -e "                        <select name=\"UnwrRES\" id = \"UnwrRES\" onchange=\"javascript:this.form.submit()\">"
-
-echo -en "                            <option value = \"0\""
-if [  $(($ctrlW & 0x02)) -eq 0 ]; then
-    echo -en " selected=\"selected\""
-fi
-echo -e ">DISABLED</option>"
-
-echo -en "                            <option value = \"1\""
-if ! [  $(($ctrlW & 0x02)) -eq 0 ]; then
-    echo -en " selected=\"selected\""
-fi
-echo -e ">ENABLED</option>"
-
-echo -e "                        </select>"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Unwrapper Reset Threshold:</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-
-echo -en "                        <input type=\"number\" name=\"UnwrTHR\" id=\"UnwrTHR\" min=\"0\" value="
-printf "%d" $(($resTHRreadback))
-echo -e " onchange=\"javascript:this.form.submit()\">"
-
-echo -e "                        cnts"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Diagnostic Signal Generator Freq: 3'123'437.5 +</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-
-echo -en "                        <input type=\"number\" name=\"siggenDFTW\" id=\"siggenDFTW\" value="
-printf "%d" $(($siggenDF))
-echo -e " onchange=\"javascript:this.form.submit()\">"
-
-echo -e "                        Hz"
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Control Loop Extra Gain (default=4; hi-perf=6):</td>"
-echo -e "                <td>"
-echo -e "                    <form action=\"\" method=\"GET\" >"
-
-echo -en "                        <input type=\"number\" name=\"extraGain\" id=\"extraGain\" value="
-printf "%s" $extra_Gain
-echo -e " step=0.5 onchange=\"javascript:this.form.submit()\">"
-
-echo -e "                    </form>"
-echo -e "                </td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e ""
-echo -e "        </table>"
-echo -e ""
-#echo -e "        <br>"
-# if an automatic alarm reset is requested, programmatically click the relevant button:
-if [ $AlarmAutoReset = "1" ]; then
-echo -e "         <script>"
-echo -e "         document.getElementById('lock_loss_res_btn').click();"
-echo -e "         </script>"
-fi
-
-#echo -e "        <br>"
-echo -e "        <H3>Synchronizer Readback</H3>"
-echo -e ""
-echo -e "        <!-- readback values + Lock LEDs-->"
-echo -e "        <!-- keep it in a separate frame to enable autoupdate for readback values only -->"
-echo -e "        <!-- iframe src=\"readVars.html\" scrolling=no style=\"border:none; height: 220px; width: 600px\" title=\"Readback Values\"></iframe -->"
-echo -e "        <iframe src=\"/cgi-bin/readVars.cgi\" scrolling=no style=\"border:none; height: 350px; width: 600px\" title=\"Readback Values\"></iframe>"
-echo -e ""
-#echo -e "        <br>"
-
-echo -e "   </body>"
-echo -e "</html>"
-
-
-
-
-
+print('</body>')
+print('</html>')
 
 

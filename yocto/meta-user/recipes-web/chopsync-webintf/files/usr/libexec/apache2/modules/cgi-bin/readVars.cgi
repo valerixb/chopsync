@@ -1,194 +1,304 @@
-#!/bin/bash
+#!/usr/bin/python
 
-# remember: no blanks before or after = , otherwise labels are interpreted as commands instead of variables
+import socket
+#import select
+import os
+#import urllib.parse
+#import time
+from datetime import datetime
+#import numpy as np
+#import matplotlib.pyplot as plt
+#import io
+#import base64
+#import fnmatch
 
-DEVMEM="/usr/libexec/apache2/modules/cgi-bin/devmem"
+# constants
+ERR_STRING='&ltERR&gt'
+LOL_FNAME="lockloss.txt"
 
-#################################################
-#           readback values from hardware
-#################################################
-
-statusW=$( $DEVMEM 0x80030000 32 )
-accelCMD=$( $DEVMEM 0x80030014 32 )
-# accel CMD is signed 22.0
-if [ $(($accelCMD)) -gt 2097151 ]; then
-    accelCMD=$(($accelCMD - 4194304))
-fi
-
-phERR=$( $DEVMEM 0x80030018 32 )
-# phase error is signed 24.7 ; scale is 8 ns
-if [ $(($phERR)) -gt 8388607 ]; then
-    phERR=$(($phERR - 16777216))
-fi
-#phERR=$(($phERR*8/128))
-phERR=$( printf "%d" $phERR | awk '{printf("%+.3f",$1*8/128 )}' )
-
-REFfreq=$( $DEVMEM 0x8003001C 32 )
-VCOfreq=$( $DEVMEM 0x80030020 32 )
-
-Rdiv=$( $DEVMEM 0x80030024 32 )
-Ndiv=$( $DEVMEM 0x80030028 32 )
+# defaults
 
 
-##############################################################
-#      send appropriate HTML back to requesting client
-##############################################################
+# --------------------  open html page right away, so we can print errors on it -----------------------
+
+print('Content-type:text/html\r\n\r\n')
+print('<!DOCTYPE html>')
+print('<html>')
+print('<head>')
+print('  <link rel="stylesheet" href="/LEDstyle.css">')
+print('  <meta http-equiv="refresh" content="1">')
+print('</head>')
+print('<body>')
 
 
-# CAREFUL!! the line with "Content-type and the subsequent blank line ARE NECESSARY, otherwise the page will not load
-echo -e "Content-type: text/html"
-echo ""
 
-# ----------------------------------------
+# --------- open a connection to r5ctrlr SCPI server ----------
 
-echo -e "<!DOCTYPE html>"
-echo -e "<html>"
-echo -e "   <head>"
-echo -e "    <link rel=\"stylesheet\" href=\"/LEDstyle.css\">"
-echo -e "    <meta http-equiv=\"refresh\" content=\"1\" >"
-echo -e "   </head>"
-echo -e "   <body>"
-echo -e "        "
-echo -e "        <!-- readback values -->"
-echo -e "        <table>"
-echo -e "            <tr>"
-echo -e "                <td>Acceleration Command:</td>"
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(("127.0.0.1", 8888))
+#s.connect(("192.168.0.17", 8888))
 
-echo -en "                <td align=\"right\">"
-printf "%+d" $(($accelCMD))
-echo -e "</td>"
 
-echo -e "                <td>pulses</td>"
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Phase Error:</td>"
+# ------------------  get current config  --------------------
 
-echo -en "                <td align=\"right\">"
-#printf "%d" $(($phERR))
-printf "%+.0f" $phERR
-#echo $phERR
+# -------- acceleration command
+qstr='MECOS_CMD?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  MECOS_cmd=tok[1].strip()
+else:
+  MECOS_cmd=ERR_STRING
 
-echo -e "</td>"
+# -------- phase error
+qstr='PHERR?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  pherr=tok[1].strip()
+else:
+  pherr=ERR_STRING
 
-echo -e "                <td>ns</td>"
-echo -e "            </tr>"
-echo -e "            "
-echo -e "            <tr>"
-echo -e "                <td>REF Frequency:</td>"
+# -------- bunch marker frequency
+qstr='BUNCHFREQ?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  bunch_freq=tok[1].strip()
+else:
+  bunch_freq=ERR_STRING
 
-echo -en "                <td align=\"right\">"
-printf "%d" $(($REFfreq))
-echo -e "</td>"
+# -------- chopper frequency
+qstr='CHOPFREQ?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  chop_freq=tok[1].strip()
+else:
+  chop_freq=ERR_STRING
 
-echo -e "                <td>Hz</td>"
-echo -e "            </tr>"
-echo -e "            "
+# -------- bunch marker prescaler
+qstr='BUNCHMARKER_PRESCALER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  R_div=tok[1].strip()
+else:
+  R_div=ERR_STRING
 
-echo -e "            <tr>"
-echo -e "                <td>CHOPPER Frequency:</td>"
+# -------- chopper prescaler
+qstr='CHOPPER_PRESCALER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  N_div=tok[1].strip()
+else:
+  N_div=ERR_STRING
 
-echo -en "                <td align=\"right\">"
-printf "%d" $(($VCOfreq))
-echo -e "</td>"
+# -------- sync ON/OFF
+qstr='SYNCHRONIZER?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    sync_ONOFF=True
+  else:
+    sync_ONOFF=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying the global ON/OFF state<br>')
+  sync_ONOFF=False
 
-echo -e "                <td>Hz</td>"
-echo -e "            </tr>"
+# -------- frequency lock
+qstr='FLOCK?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    freq_lock=True
+  else:
+    freq_lock=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying frequency lock<br>')
+  freq_lock=False
 
-echo -e "            <tr>"
-echo -e "                <td> <br> </td> "
-echo -e "            </tr>"
+# -------- phase lock
+qstr='PHLOCK?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    phase_lock=True
+  else:
+    phase_lock=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying phase lock<br>')
+  phase_lock=False
 
-echo -e "            <tr>"
-echo -en "                <td>REF/"
-printf "%d" $(($Rdiv))
-echo -e ":</td>"
-echo -en "                <td align=\"right\">"
-#printf "%.3f" $(($REFfreq/$Rdiv))
-printf "%d %d" $REFfreq $Rdiv | awk '{printf("%.3f",$1/$2 )}'
-echo -e "</td>"
-echo -e "                <td>Hz</td>"
-echo -e "            </tr>"
+# -------- sticky loss of lock alarm
+qstr='STICKYLOL?\n'
+s.sendall(bytes(qstr,encoding='ascii')) 
+ans=(s.recv(1024)).decode("utf-8")
+tok=ans.split(" ",2)
+if(tok[0].strip()=="OK:"):
+  if(tok[1].strip())=="ON":
+    sticky_LOL=True
+  else:
+    sticky_LOL=False
+else:
+  # use default in case of error, but issue a message
+  print('<br>Error querying sticky loss of lock alarm<br>')
+  sticky_LOL=False
 
-echo -e "            <tr>"
-echo -en "                <td>CHOPPER/"
-printf "%d" $(($Ndiv))
-echo -e ":</td>"
-echo -en "                <td align=\"right\">"
-#printf "%.3f" $(($VCOfreq/$Ndiv))
-printf "%d %d" $VCOfreq $Ndiv | awk '{printf("%.3f",$1/$2 )}'
-echo -e "</td>"
-echo -e "                <td>Hz</td>"
-echo -e "            </tr>"
 
-echo -e "        </table>"
-echo -e ""
-echo -e "        <br>"
-echo -e "        "
-echo -e "        <!-- Lock LEDs -->"
-echo -e "        <table>"
-echo -e "            <tr>"
-echo -e "                <td>Frequency Lock</td>"
+# --------------------  now display body of html page  -----------------------
 
-echo -en "                <td><span class=\""
-if ! [  $(($statusW & 0x01)) -eq 0 ]; then
-    echo -en "greendot"
-else
-    echo -en "greydot"
-fi
-echo -e "\"></span></td>"
+print('<table>')
 
-echo -e "            </tr>"
-echo -e ""
-echo -e "            <tr>"
-echo -e "                <td>Phase Lock</td>"
+print('  <tr>')
+print('    <td>Acceleration Command:</td>')
+print('    <td align="right">'+MECOS_cmd+'</td>')
+print('    <td>pulses</td>')
+print('  </tr>')
 
-echo -en "                <td><span class=\""
-if ! [ $(($statusW & 0x02)) -eq 0 ]; then
-    echo -en "greendot"
-else
-    echo -en "greydot"
-fi
-echo -e "\"></span></td>"
+if pherr!=ERR_STRING:
+  pherr_str="{:+d}".format(round(float(pherr)))
+else:
+  pherr_str=pherr
+  
+print('  <tr>')
+print('    <td>Phase Error:</td>')
+print('    <td align="right">'+pherr_str+'</td>')
+print('    <td>ns</td>')
+print('  </tr>')
 
-echo -e "            </tr>"
+print('  <tr>')
+print('    <td>Bunch Marker Freq:</td>')
+print('    <td align="right">'+bunch_freq+'</td>')
+print('    <td>Hz</td>')
+print('  </tr>')
 
-echo -e "            <tr>"
-echo -e "                <td>Phase Lock Loss Alarm (sticky)</td>"
+print('  <tr>')
+print('    <td>Chopper Freq:</td>')
+print('    <td align="right">'+chop_freq+'</td>')
+print('    <td>Hz</td>')
+print('  </tr>')
 
-echo -en "                <td><span class=\""
-if ! [ $(($statusW & 0x020)) -eq 0 ]; then
-    echo -en "reddot"
-else
-    echo -en "greydot"
-fi
-echo -e "\"></span></td>"
+print('  <tr>')
+print('    <td> <br> </td>')
+print('  </tr>')
 
-echo -e "            </tr>"
-echo -e "        </table>"
-echo -e "        <br>"
+# -------- scaled frequencies
 
-if ! [ $(($statusW & 0x020)) -eq 0 ]; then
-    if ! [ -f "lockloss.txt" ]; then
-        # if "lockloss.txt" file does not exist, then it's the first lock loss event: save its date/time
-        date >| "lockloss.txt"
-    fi
-    echo -e "First Lock Loss event occurred on "
-    cat "lockloss.txt"
-    echo -e "        <br>"
-    echo -e "Current time is "
-    date
-    echo -e "        <br>"
-else
-    rm "lockloss.txt"
-fi
+if ((bunch_freq!=ERR_STRING) and (R_div!=ERR_STRING)):
+  r=int(R_div)
+  if r!=0:
+    scaled_bunch="{:.3f}".format(float(bunch_freq)/float(R_div))
+  else:
+    scaled_bunch=ERR_STRING
+else:
+  scaled_bunch=ERR_STRING
 
-echo -e ""
-echo -e "        <br>"
-echo -e "        <br>"
-echo -e ""
-echo -e "   </body>"
-echo -e "</html>"
+print('  <tr>')
+print('    <td>Bunch Marker Freq/'+R_div+':</td>')
+print('    <td align="right">'+scaled_bunch+'</td>')
+print('    <td>Hz</td>')
+print('  </tr>')
+
+if ((chop_freq!=ERR_STRING) and (N_div!=ERR_STRING)):
+  n=int(N_div)
+  if n!=0:
+    scaled_chop="{:.3f}".format(float(chop_freq)/float(N_div))
+  else:
+    scaled_chop=ERR_STRING
+else:
+  scaled_chop=ERR_STRING
+
+print('  <tr>')
+print('    <td>Chopper Freq/'+N_div+':</td>')
+print('    <td align="right">'+scaled_chop+'</td>')
+print('    <td>Hz</td>')
+print('  </tr>')
+
+print('  <tr>')
+print('    <td> <br> </td>')
+print('  </tr>')
+
+print('</table>')
+
+
+# -------- Lock LEDs
+
+print('<table>')
+
+print('  <tr>')
+print('    <td>Frequency Lock</td>')
+print('    <td><span class="',end='')
+if freq_lock:
+  print('greendot',end='')
+else:
+  print('greydot',end='')
+print('"></span></td>')
+print('  </tr>')
+
+print('  <tr>')
+print('    <td>Phase Lock</td>')
+print('    <td><span class="',end='')
+if phase_lock:
+  print('greendot',end='')
+else:
+  print('greydot',end='')
+print('"></span></td>')
+print('  </tr>')
+
+print('  <tr>')
+print('    <td>Phase Lock Loss Alarm (sticky)</td>')
+print('    <td><span class="',end='')
+if sticky_LOL:
+  print('reddot',end='')
+else:
+  print('greydot',end='')
+print('"></span></td>')
+print('  </tr>')
+
+print('</table>')
+print('<br>')
+
+# -------- print time of first loss of lock event
+if sticky_LOL:
+  if os.path.exists(LOL_FNAME):
+    print('First Lock Loss event occurred on ')
+    with open(LOL_FNAME, "r") as f:
+      print(f.read())
+    print('<br>')
+    print('Current time is '+str(datetime.now()))
+    print('<br>')
+  else:
+    with open(LOL_FNAME, "w") as f:
+      f.write(str(datetime.now()))
+else:
+  if os.path.exists(LOL_FNAME):
+    os.remove(LOL_FNAME)
+
+print('<br>')
+print('<br>')
+
+print('</body>')
+print('</html>')
+
+
+
 
 
 
