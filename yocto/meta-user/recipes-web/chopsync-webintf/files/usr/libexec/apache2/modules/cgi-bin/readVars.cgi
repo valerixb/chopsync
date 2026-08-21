@@ -14,7 +14,7 @@ from datetime import datetime
 
 # constants
 ERR_STRING='&ltERR&gt'
-LOL_FNAME="lockloss.txt"
+LOL_FNAME="/tmp/lockloss.txt"
 
 # defaults
 
