@@ -1,0 +1,23 @@
+.greydot {
+  height: 20px;
+  width: 20px;
+  background-color: #808080;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.greendot {
+  height: 20px;
+  width: 20px;
+  background-color: #00FF00;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.reddot {
+  height: 20px;
+  width: 20px;
+  background-color: #FF0000;
+  border-radius: 50%;
+  display: inline-block;
+}

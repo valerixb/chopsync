@@ -1,0 +1,9 @@
+#!/bin/bash
+set -x # echo on
+#SECONDS=0
+MACHINE=custom-machine bitbake u-boot-xlnx -c menuconfig
+cp \
+  ./tmp/work/custom_machine-amd-linux/u-boot-xlnx/2025.01-xilinx-v2025.1+git/build/.config \
+  ../sources/meta-user/recipes-bsp/u-boot/files/usr-u-boot.cfg
+#duration=$SECONDS
+#TZ=UTC0 printf 'Yocto compile time was %(%H:%M:%S)T\n' "$duration"

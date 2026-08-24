@@ -1,0 +1,37 @@
+# before compiling, manually source the environment setup script:
+# . /xilinxworks/ZCU106/v2025.2/chopsync/sdk-linux/environment-setup-cortexa72-cortexa53-amd-linux
+
+OBJ_LOCAL = can.o server.o
+TARGET = chopsync-scpi-serv
+SYSROOT_PATH = /xilinxworks/ZCU106/v2025.2/chopsync/sdk-linux/sysroots/cortexa72-cortexa53-amd-linux
+
+CC = /tools/Xilinx/2025.2/Vitis/gnu/aarch64/lin/aarch64-linux/bin/aarch64-linux-gnu-gcc
+CFLAGS = -O0 -g3 -Wall -I../common \
+         --sysroot=$(SYSROOT_PATH) \
+         -I$(SYSROOT_PATH)/usr/include
+LDFLAGS = -Wall \
+          --sysroot=$(SYSROOT_PATH) \
+          -L$(SYSROOT_PATH)/usr/lib \
+          -lm
+OBJ_DIR = ./obj
+_OBJ = $(patsubst %,$(OBJ_DIR)/%,$(OBJ_LOCAL))
+
+DEP=$(_OBJ:%.o=%.d)
+-include $(DEP)
+
+all: bindir $(TARGET)
+default: all
+
+bindir:
+	@mkdir -p $(OBJ_DIR)
+
+$(_OBJ): $(OBJ_DIR)/%.o: %.c
+	$(CC) $(CFLAGS) -MMD -c $< -o $@
+
+$(TARGET): $(_OBJ)
+	$(CC) $^ $(LDFLAGS) -o $@
+	# rm $^
+
+clean:
+	-rm -rf $(OBJ_DIR)
+	-rm -f $(TARGET)
