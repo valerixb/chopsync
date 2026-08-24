@@ -1,0 +1,11 @@
+#!/bin/bash
+set -x # echo on
+SECONDS=0
+MACHINE=amd-cortexa53-common bitbake meta-edf-app-sdk -c cleanall
+rm -rf ./sstate-cache
+rm -rf ./tmp
+rm -rf ./tmp-custom-machine-cortexa53-fsbl
+rm -rf ./tmp-custom-machine-microblaze-pmu
+MACHINE=amd-cortexa53-common bitbake meta-edf-app-sdk
+duration=$SECONDS
+TZ=UTC0 printf 'Yocto compile time was %(%H:%M:%S)T\n' "$duration"

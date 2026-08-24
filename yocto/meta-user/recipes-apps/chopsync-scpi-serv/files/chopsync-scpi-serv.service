@@ -1,0 +1,9 @@
+[Unit]
+Description=chopsync-scpi-serv
+  
+[Service]
+ExecStart=/usr/bin/chopsync-scpi-serv
+StandardOutput=journal+console
+  
+[Install]
+WantedBy=multi-user.target
